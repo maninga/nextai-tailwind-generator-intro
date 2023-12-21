@@ -5,19 +5,15 @@ export const openai = new OpenAI({
   dangerouslyAllowBrowser: true,
 })
 
-console.log(
-  "import.meta.env.VITE_OPENAI_API_KEY",
-  import.meta.env.VITE_OPENAI_API_KEY
-)
-
 const form = document.getElementById("generate-form") as HTMLFormElement
+const iframe = document.getElementById("generated-code") as HTMLIFrameElement
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault()
   const formData = new FormData(form)
   const prompt = formData.get("prompt") as string
 
-  const chatCompletion = await openai.chat.completions.create({
+  const chatCompletionStream = await openai.chat.completions.create({
     messages: [
       {
         role: "system",
@@ -30,25 +26,59 @@ You never reply using markdown syntax.`,
       { role: "user", content: prompt },
     ],
     model: "gpt-3.5-turbo",
+    // Streaming activated
+    stream: true,
   })
 
-  const iframe = document.getElementById("generated-code") as HTMLIFrameElement
-  const code = chatCompletion.choices[0].message.content
+  let code = ""
+  const onNewToken = updateIframeFn()
+  // Syntaxe pour lire un stream
+  for await (const message of chatCompletionStream) {
+    // console.log(message)
+    // Traiter chaque message reçu
+    const isDone = message.choices[0].finish_reason === "stop"
+    if (isDone) {
+      break
+    }
 
-  if (!code) {
-    alert("Failed to generate code. Please try again.")
-    return
+    const token = message.choices[0].delta.content || ""
+    code += token
+    console.log(code)
+    onNewToken(code)
   }
+})
+
+// Mise à jour de l'iframe avec un certain délai
+const updateIframe = (code: string) => {
+  // Mettre à jour l'iframe avec le code
   iframe.srcdoc = `<!DOCTYPE html>
 <html lang="en">
   <head>
     <!-- ... other head elements ... -->
-    <link type="text/css" href="https://cdn.tailwindcss.com" rel="stylesheet" />
+    <script src="https://cdn.tailwindcss.com"></script>
   </head>
   <body>
     ${code}
   </body>
 </html>`
+}
 
-  console.log("chatCompletion", chatCompletion)
-})
+const updateIframeFn = () => {
+  let date = new Date()
+  let timeout: number | null = null
+  // Logique pour créer ou annuler un timeout
+  return (code: string) => {
+    // Mise à jour de l'iframe toute les secondes
+    if (new Date().getTime() - date.getTime() > 1000) {
+      date = new Date()
+      updateIframe(code)
+    }
+    // Annulation du timeout s'il existe
+    if (timeout) {
+      clearTimeout(timeout)
+      timeout = null
+    }
+    // Création d'un nouveau timeout
+    timeout = setTimeout(() => updateIframe(code), 1000)
+  }
+}
